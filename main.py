@@ -16,6 +16,52 @@ def ml_headers():
     if token:
         headers["Authorization"] = f"Bearer {token}"
     return headers
+from fastapi import FastAPI, Query, Request
+from fastapi.responses import JSONResponse
+import os
+import requests
+
+app = FastAPI()
+
+ML_OAUTH_TOKEN_URL = "https://api.mercadolibre.com/oauth/token"
+
+
+@app.get("/ml/callback")
+def ml_callback(code: str = Query(..., description="Authorization code from Mercado Libre")):
+    """
+    Mercado Libre redirects here with ?code=...
+    We exchange that code for access_token + refresh_token.
+    """
+    client_id = os.getenv("ML_CLIENT_ID")
+    client_secret = os.getenv("ML_CLIENT_SECRET")
+    redirect_uri = os.getenv("ML_REDIRECT_URI")  # must match exactly what you used in the auth URL
+
+    if not client_id or not client_secret or not redirect_uri:
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": "missing_env_vars",
+                "message": "Set ML_CLIENT_ID, ML_CLIENT_SECRET and ML_REDIRECT_URI in Render Environment Variables",
+            },
+        )
+
+    data = {
+        "grant_type": "authorization_code",
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "code": code,
+        "redirect_uri": redirect_uri,
+    }
+
+    r = requests.post(ML_OAUTH_TOKEN_URL, data=data, timeout=20)
+
+    # We return Mercado Libre response as-is (useful to see refresh_token)
+    try:
+        payload = r.json()
+    except Exception:
+        payload = {"raw": r.text}
+
+    return JSONResponse(status_code=r.status_code, content=payload)
 
 @app.get("/sites/MLA")
 def get_site():
