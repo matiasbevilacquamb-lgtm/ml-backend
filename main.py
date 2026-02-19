@@ -16,12 +16,6 @@ def ml_headers():
     if token:
         headers["Authorization"] = f"Bearer {token}"
     return headers
-from fastapi import FastAPI, Query, Request
-from fastapi.responses import JSONResponse
-import os
-import requests
-
-app = FastAPI()
 
 ML_OAUTH_TOKEN_URL = "https://api.mercadolibre.com/oauth/token"
 
