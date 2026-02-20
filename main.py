@@ -17,9 +17,78 @@ def ml_headers():
         headers["Authorization"] = f"Bearer {token}"
     return headers
 
-ML_OAUTH_TOKEN_URL = "https://api.mercadolibre.com/oauth/token"
+
+import os
+import time
+import requests
+from fastapi import FastAPI
+
+app = FastAPI()
+
+# ===== TOKEN MANAGEMENT =====
+TOKEN_URL = "https://api.mercadolibre.com/oauth/token"
+
+_token_cache = {
+    "access_token": None,
+    "expires_at": 0,
+}
+def refresh_access_token():
+    client_id = os.getenv("4448038779323482")
+    client_secret = os.getenv("kJBjgJz0x3UKkDbywfqCEyCapvYNC1DT")
+    refresh_token = os.getenv("TG-69985db9f86683000167c7ad-316740012")
+
+    if not all([client_id, client_secret, refresh_token]):
+        raise RuntimeError("Missing ML credentials in environment variables")
+
+    payload = {
+        "grant_type": "refresh_token",
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "refresh_token": refresh_token,
+    }
+
+    r = requests.post(TOKEN_URL, data=payload, timeout=20)
+    data = r.json()
+
+    if r.status_code != 200:
+        raise RuntimeError(f"Error refreshing token: {data}")
+
+    access_token = data["access_token"]
+    expires_in = int(data.get("expires_in", 21600))
+    new_refresh = data.get("refresh_token")
+
+    _token_cache["access_token"] = access_token
+    _token_cache["expires_at"] = int(time.time()) + expires_in - 60
+
+    if new_refresh and new_refresh != refresh_token:
+        print("⚠️ NEW REFRESH TOKEN (update in Render):", new_refresh)
+
+    return access_token
 
 
+def get_access_token():
+    if (
+        _token_cache["access_token"]
+        and time.time() < _token_cache["expires_at"]
+    ):
+        return _token_cache["access_token"]
+
+    return refresh_access_token()
+# ===== ENDPOINTS =====
+@app.get("/ml/test-auth")
+def ml_test_auth():
+    token = get_access_token()
+
+    r = requests.get(
+        "https://api.mercadolibre.com/users/me",
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=20
+    )
+
+    return {
+        "status_code": r.status_code,
+        "response": r.json()
+    }
 @app.get("/ml/callback")
 def ml_callback(code: str = Query(..., description="Authorization code from Mercado Libre")):
     """
