@@ -33,9 +33,9 @@ _token_cache = {
     "expires_at": 0,
 }
 def refresh_access_token():
-    client_id = os.getenv("4448038779323482")
-    client_secret = os.getenv("kJBjgJz0x3UKkDbywfqCEyCapvYNC1DT")
-    refresh_token = os.getenv("TG-69985db9f86683000167c7ad-316740012")
+    client_id = os.getenv("ML_CLIENT_ID")
+client_secret = os.getenv("ML_CLIENT_SECRET")
+refresh_token = os.getenv("ML_REFRESH_TOKEN")
 
     if not all([client_id, client_secret, refresh_token]):
         raise RuntimeError("Missing ML credentials in environment variables")
