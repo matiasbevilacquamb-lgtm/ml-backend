@@ -140,8 +140,7 @@ def search(q: str = Query(..., min_length=1), limit: int = 20):
 import statistics
 
 @app.get("/market/analysis")
-def market_analysis(q: str, limit: int = 50):
-
+def market_analysis(q: str, limit: int = 50, min_sold: int = 1, only_new: bool = True):
     r = requests.get(
         f"{BASE}/sites/MLA/search",
         params={"q": q, "limit": limit},
@@ -151,50 +150,56 @@ def market_analysis(q: str, limit: int = 50):
     data = r.json()
     items = data.get("results", [])
 
-    # Filtrar solo nuevos y con ventas reales
+    def ok_condition(i):
+        return (i.get("condition") == "new") if only_new else True
+
     filtered = [
         i for i in items
-        if i.get("sold_quantity", 0) > 1
-        and i.get("condition") == "new"
+        if i.get("price") is not None
+        and ok_condition(i)
+        and (i.get("sold_quantity") or 0) >= min_sold
     ]
 
+    # 👇 diagnóstico para que no quedes ciego
     if len(filtered) < 3:
-        return {"error": "Not enough real sales data"}
+        sample = [{
+            "title": i.get("title"),
+            "price": i.get("price"),
+            "sold_quantity": i.get("sold_quantity"),
+            "condition": i.get("condition"),
+            "link": i.get("permalink")
+        } for i in items[:10]]
 
-    prices = [i["price"] for i in filtered]
-    sold_quantities = [i["sold_quantity"] for i in filtered]
-
-    avg_price = sum(prices) / len(prices)
-    std_dev = statistics.stdev(prices) if len(prices) > 1 else 0
-
-    # Eliminar outliers
-    cleaned = [
-        i for i in filtered
-        if std_dev == 0 or abs(i["price"] - avg_price) <= 2 * std_dev
-    ]
-
-    prices_clean = [i["price"] for i in cleaned]
-    sold_clean = [i["sold_quantity"] for i in cleaned]
-
-    weighted_avg_clean = sum(p * s for p, s in zip(prices_clean, sold_clean)) / sum(sold_clean)
-
-    top_5 = sorted(cleaned, key=lambda x: x["sold_quantity"], reverse=True)[:5]
-
-    top_5_clean = [
-        {
-            "title": i["title"],
-            "price": i["price"],
-            "sold_quantity": i["sold_quantity"],
-            "link": i["permalink"]
+        return {
+            "error": "Not enough real sales data",
+            "q": q,
+            "limit": limit,
+            "min_sold": min_sold,
+            "only_new": only_new,
+            "items_total": len(items),
+            "items_after_filter": len(filtered),
+            "sample_first_10": sample
         }
-        for i in top_5
-    ]
+
+    # --- cálculo promedio ponderado ---
+    prices = [i["price"] for i in filtered]
+    solds = [(i.get("sold_quantity") or 0) for i in filtered]
+
+    weighted_avg = sum(p * s for p, s in zip(prices, solds)) / sum(solds)
+
+    top_5 = sorted(filtered, key=lambda x: x.get("sold_quantity", 0), reverse=True)[:5]
+    top_5_clean = [{
+        "title": i.get("title"),
+        "price": i.get("price"),
+        "sold_quantity": i.get("sold_quantity"),
+        "link": i.get("permalink")
+    } for i in top_5]
 
     return {
-        "query": q,
-        "items_analyzed": len(cleaned),
-        "weighted_average_price": round(weighted_avg_clean, 2),
-        "min_price": min(prices_clean),
-        "max_price": max(prices_clean),
+        "q": q,
+        "items_analyzed": len(filtered),
+        "weighted_average_price": round(weighted_avg, 2),
+        "min_price": min(prices),
+        "max_price": max(prices),
         "top_5_best_sellers": top_5_clean
     }
