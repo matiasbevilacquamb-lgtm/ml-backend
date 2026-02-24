@@ -165,7 +165,21 @@ def market_analysis(q: str, limit: int = 50, min_sold: int = 1, only_new: bool =
         )
 
     items = data.get("results", [])
-
+    if len(items) == 0:
+        return {
+            "error": "ml_zero_results",
+            "q": q,
+            "limit": limit,
+            "min_sold": min_sold,
+            "only_new": only_new,
+            "ml_status_code": r.status_code,
+            "ml_url": r.url,                 # <- URL real que se llamó
+            "ml_keys": list(data.keys()),    # <- qué trae el JSON
+            "ml_paging": data.get("paging"), # <- total, offset, limit
+            "ml_query": data.get("query"),
+            "ml_sort": data.get("sort"),
+            "ml_data_preview": data          # <- para ver la respuesta completa
+        }
     def ok_condition(i):
         return (i.get("condition") == "new") if only_new else True
 
