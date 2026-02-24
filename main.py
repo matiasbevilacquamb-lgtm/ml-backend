@@ -17,7 +17,11 @@ def ml_headers():
         "User-Agent": "Mozilla/5.0 (Render) ml-backend/1.0",
         "Accept": "application/json",
     }
-
+def ml_headers_auth():
+    headers = ml_headers()
+    token = get_access_token()
+    headers["Authorization"] = f"Bearer {token}"
+    return headers
 # ===== TOKEN MANAGEMENT (OAuth) =====
 _token_cache = {
     "access_token": None,
@@ -149,13 +153,21 @@ def market_analysis(
     min_sold: int = 1,
     only_new: bool = True,
 ):
+   r = requests.get(
+    f"{BASE}/sites/MLA/search",
+    params={"q": q, "limit": limit},
+    timeout=20,
+    headers=ml_headers(),
+)
+
+# Si ML bloquea (403), reintentamos autenticado
+if r.status_code == 403:
     r = requests.get(
         f"{BASE}/sites/MLA/search",
         params={"q": q, "limit": limit},
         timeout=20,
-        headers=ml_headers(),
+        headers=ml_headers_auth(),
     )
-
     try:
         data = r.json()
     except Exception:
