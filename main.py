@@ -154,7 +154,7 @@ def market_analysis(q: str, limit: int = 50):
     # Filtrar solo nuevos y con ventas reales
     filtered = [
         i for i in items
-        if i.get("sold_quantity", 0) > 5
+        if i.get("sold_quantity", 0) > 1
         and i.get("condition") == "new"
     ]
 
