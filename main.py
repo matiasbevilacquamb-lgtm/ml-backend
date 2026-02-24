@@ -2,7 +2,8 @@ from fastapi import FastAPI, Query
 from fastapi.responses import JSONResponse
 import os
 import requests
-
+import statistics
+import time
 app = FastAPI()
 
 BASE = "https://api.mercadolibre.com"
@@ -16,14 +17,6 @@ def ml_headers():
     if token:
         headers["Authorization"] = f"Bearer {token}"
     return headers
-
-
-import os
-import time
-import requests
-from fastapi import FastAPI
-
-app = FastAPI()
 
 # ===== TOKEN MANAGEMENT =====
 TOKEN_URL = "https://api.mercadolibre.com/oauth/token"
@@ -144,3 +137,64 @@ def search(q: str = Query(..., min_length=1), limit: int = 20):
     except Exception:
         data = {"raw": r.text}
     return JSONResponse(status_code=r.status_code, content=data)
+import statistics
+
+@app.get("/market/analysis")
+def market_analysis(q: str, limit: int = 50):
+
+    r = requests.get(
+        f"{BASE}/sites/MLA/search",
+        params={"q": q, "limit": limit},
+        timeout=20
+    )
+
+    data = r.json()
+    items = data.get("results", [])
+
+    # Filtrar solo nuevos y con ventas reales
+    filtered = [
+        i for i in items
+        if i.get("sold_quantity", 0) > 5
+        and i.get("condition") == "new"
+    ]
+
+    if len(filtered) < 3:
+        return {"error": "Not enough real sales data"}
+
+    prices = [i["price"] for i in filtered]
+    sold_quantities = [i["sold_quantity"] for i in filtered]
+
+    avg_price = sum(prices) / len(prices)
+    std_dev = statistics.stdev(prices) if len(prices) > 1 else 0
+
+    # Eliminar outliers
+    cleaned = [
+        i for i in filtered
+        if std_dev == 0 or abs(i["price"] - avg_price) <= 2 * std_dev
+    ]
+
+    prices_clean = [i["price"] for i in cleaned]
+    sold_clean = [i["sold_quantity"] for i in cleaned]
+
+    weighted_avg_clean = sum(p * s for p, s in zip(prices_clean, sold_clean)) / sum(sold_clean)
+
+    top_5 = sorted(cleaned, key=lambda x: x["sold_quantity"], reverse=True)[:5]
+
+    top_5_clean = [
+        {
+            "title": i["title"],
+            "price": i["price"],
+            "sold_quantity": i["sold_quantity"],
+            "link": i["permalink"]
+        }
+        for i in top_5
+    ]
+
+    return {
+        "query": q,
+        "items_analyzed": len(cleaned),
+        "weighted_average_price": round(weighted_avg_clean, 2),
+        "min_price": min(prices_clean),
+        "max_price": max(prices_clean),
+        "top_5_best_sellers": top_5_clean
+    }
