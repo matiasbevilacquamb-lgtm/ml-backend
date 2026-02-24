@@ -183,3 +183,76 @@ def market_analysis(
             for i in top_5
         ],
     }
+from fastapi import Body
+
+@app.post("/market/analyze-results")
+def analyze_results(payload: dict = Body(...)):
+    """
+    Recibe el JSON de Mercado Libre (response de /sites/MLA/search)
+    y devuelve análisis: promedio ponderado, min/max, top sellers.
+    """
+    items = payload.get("results", [])
+    if not items:
+        return {"error": "No results provided", "items_total": 0}
+
+    # Parámetros opcionales (si vienen en payload.meta)
+    meta = payload.get("meta", {}) or {}
+    min_sold = int(meta.get("min_sold", 1))
+    only_new = bool(meta.get("only_new", True))
+
+    def ok_condition(i):
+        return (i.get("condition") == "new") if only_new else True
+
+    filtered = [
+        i for i in items
+        if i.get("price") is not None
+        and ok_condition(i)
+        and (i.get("sold_quantity") or 0) >= min_sold
+    ]
+
+    if len(filtered) < 3:
+        sample = [{
+            "title": i.get("title"),
+            "price": i.get("price"),
+            "sold_quantity": i.get("sold_quantity"),
+            "condition": i.get("condition"),
+            "link": i.get("permalink")
+        } for i in items[:10]]
+
+        return {
+            "error": "Not enough real sales data",
+            "items_total": len(items),
+            "items_after_filter": len(filtered),
+            "min_sold": min_sold,
+            "only_new": only_new,
+            "sample_first_10": sample
+        }
+
+    prices = [i["price"] for i in filtered]
+    solds = [(i.get("sold_quantity") or 0) for i in filtered]
+    total_sold = sum(solds)
+
+    if total_sold <= 0:
+        return {
+            "error": "No sold_quantity available to compute weighted average",
+            "items_analyzed": len(filtered),
+            "hint": "Try min_sold=1 or higher"
+        }
+
+    weighted_avg = sum(p * s for p, s in zip(prices, solds)) / total_sold
+
+    top_5 = sorted(filtered, key=lambda x: x.get("sold_quantity", 0), reverse=True)[:5]
+    top_5_clean = [{
+        "title": i.get("title"),
+        "price": i.get("price"),
+        "sold_quantity": i.get("sold_quantity"),
+        "link": i.get("permalink")
+    } for i in top_5]
+
+    return {
+        "items_analyzed": len(filtered),
+        "weighted_average_price": round(weighted_avg, 2),
+        "min_price": min(prices),
+        "max_price": max(prices),
+        "top_5_best_sellers": top_5_clean
+    }
