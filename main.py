@@ -1,27 +1,29 @@
 from fastapi import FastAPI, Query
 from fastapi.responses import JSONResponse
 import os
-import requests
-import statistics
 import time
+import requests
+
 app = FastAPI()
 
 BASE = "https://api.mercadolibre.com"
+TOKEN_URL = "https://api.mercadolibre.com/oauth/token"
 
+# ===== Helpers =====
 def ml_headers():
-    headers = {
+    # Para endpoints públicos NO hace falta Authorization.
+    # Igual mandamos User-Agent/Accept para evitar respuestas raras.
+    return {
         "User-Agent": "Mozilla/5.0 (Render) ml-backend/1.0",
         "Accept": "application/json",
     }
-    return headers
 
-# ===== TOKEN MANAGEMENT =====
-TOKEN_URL = "https://api.mercadolibre.com/oauth/token"
-
+# ===== TOKEN MANAGEMENT (OAuth) =====
 _token_cache = {
     "access_token": None,
     "expires_at": 0,
 }
+
 def refresh_access_token():
     client_id = os.getenv("ML_CLIENT_ID")
     client_secret = os.getenv("ML_CLIENT_SECRET")
@@ -38,7 +40,10 @@ def refresh_access_token():
     }
 
     r = requests.post(TOKEN_URL, data=payload, timeout=20)
-    data = r.json()
+    try:
+        data = r.json()
+    except Exception:
+        raise RuntimeError(f"Non-JSON response from ML token endpoint: {r.text}")
 
     if r.status_code != 200:
         raise RuntimeError(f"Error refreshing token: {data}")
@@ -50,35 +55,34 @@ def refresh_access_token():
     _token_cache["access_token"] = access_token
     _token_cache["expires_at"] = int(time.time()) + expires_in - 60
 
+    # ML a veces rota el refresh token
     if new_refresh and new_refresh != refresh_token:
         print("⚠️ NEW REFRESH TOKEN (update in Render env):", new_refresh)
 
     return access_token
 
-
 def get_access_token():
-    if (
-        _token_cache["access_token"]
-        and time.time() < _token_cache["expires_at"]
-    ):
+    if _token_cache["access_token"] and time.time() < _token_cache["expires_at"]:
         return _token_cache["access_token"]
-
     return refresh_access_token()
+
 # ===== ENDPOINTS =====
+
 @app.get("/ml/test-auth")
 def ml_test_auth():
     token = get_access_token()
-
     r = requests.get(
-        "https://api.mercadolibre.com/users/me",
+        f"{BASE}/users/me",
         headers={"Authorization": f"Bearer {token}"},
         timeout=20
     )
+    try:
+        payload = r.json()
+    except Exception:
+        payload = {"raw": r.text}
 
-    return {
-        "status_code": r.status_code,
-        "response": r.json()
-    }
+    return {"status_code": r.status_code, "response": payload}
+
 @app.get("/ml/callback")
 def ml_callback(code: str = Query(..., description="Authorization code from Mercado Libre")):
     """
@@ -87,7 +91,7 @@ def ml_callback(code: str = Query(..., description="Authorization code from Merc
     """
     client_id = os.getenv("ML_CLIENT_ID")
     client_secret = os.getenv("ML_CLIENT_SECRET")
-    redirect_uri = os.getenv("ML_REDIRECT_URI")  # must match exactly what you used in the auth URL
+    redirect_uri = os.getenv("ML_REDIRECT_URI")
 
     if not client_id or not client_secret or not redirect_uri:
         return JSONResponse(
@@ -106,8 +110,8 @@ def ml_callback(code: str = Query(..., description="Authorization code from Merc
         "redirect_uri": redirect_uri,
     }
 
-r = requests.post(TOKEN_URL, data=data, timeout=20)
-    # We return Mercado Libre response as-is (useful to see refresh_token)
+    r = requests.post(TOKEN_URL, data=data, timeout=20)
+
     try:
         payload = r.json()
     except Exception:
@@ -126,8 +130,12 @@ def get_site():
 
 @app.get("/search")
 def search(q: str = Query(..., min_length=1), limit: int = 20):
-    params = {"q": q, "limit": limit}
-    r = requests.get(f"{BASE}/sites/MLA/search", params=params, timeout=20, headers=ml_headers())
+    r = requests.get(
+        f"{BASE}/sites/MLA/search",
+        params={"q": q, "limit": limit},
+        timeout=20,
+        headers=ml_headers(),
+    )
     try:
         data = r.json()
     except Exception:
@@ -135,12 +143,17 @@ def search(q: str = Query(..., min_length=1), limit: int = 20):
     return JSONResponse(status_code=r.status_code, content=data)
 
 @app.get("/market/analysis")
-def market_analysis(q: str, limit: int = 50, min_sold: int = 1, only_new: bool = True):
-        r = requests.get(
+def market_analysis(
+    q: str,
+    limit: int = 50,
+    min_sold: int = 1,
+    only_new: bool = True,
+):
+    r = requests.get(
         f"{BASE}/sites/MLA/search",
         params={"q": q, "limit": limit},
         timeout=20,
-        headers=ml_headers(),  # ← importante
+        headers=ml_headers(),
     )
 
     try:
@@ -148,23 +161,19 @@ def market_analysis(q: str, limit: int = 50, min_sold: int = 1, only_new: bool =
     except Exception:
         return JSONResponse(
             status_code=500,
-            content={
-                "error": "ml_non_json",
-                "status_code": r.status_code,
-                "raw": r.text
-            }
+            content={"error": "ml_non_json", "status_code": r.status_code, "raw": r.text},
         )
 
+    # Si ML devuelve error con status != 200, lo mostramos
     if r.status_code != 200:
         return JSONResponse(
             status_code=r.status_code,
-            content={
-                "error": "ml_api_error",
-                "ml_response": data
-            }
+            content={"error": "ml_api_error", "ml_response": data, "ml_url": r.url},
         )
 
     items = data.get("results", [])
+
+    # Debug duro si vienen 0 resultados
     if len(items) == 0:
         return {
             "error": "ml_zero_results",
@@ -173,13 +182,14 @@ def market_analysis(q: str, limit: int = 50, min_sold: int = 1, only_new: bool =
             "min_sold": min_sold,
             "only_new": only_new,
             "ml_status_code": r.status_code,
-            "ml_url": r.url,                 # <- URL real que se llamó
-            "ml_keys": list(data.keys()),    # <- qué trae el JSON
-            "ml_paging": data.get("paging"), # <- total, offset, limit
+            "ml_url": r.url,
+            "ml_keys": list(data.keys()),
+            "ml_paging": data.get("paging"),
             "ml_query": data.get("query"),
             "ml_sort": data.get("sort"),
-            "ml_data_preview": data          # <- para ver la respuesta completa
+            "ml_data_preview": data,
         }
+
     def ok_condition(i):
         return (i.get("condition") == "new") if only_new else True
 
@@ -190,7 +200,7 @@ def market_analysis(q: str, limit: int = 50, min_sold: int = 1, only_new: bool =
         and (i.get("sold_quantity") or 0) >= min_sold
     ]
 
-    # 👇 diagnóstico para que no quedes ciego
+    # diagnóstico si hay pocos datos
     if len(filtered) < 3:
         sample = [{
             "title": i.get("title"),
@@ -208,14 +218,23 @@ def market_analysis(q: str, limit: int = 50, min_sold: int = 1, only_new: bool =
             "only_new": only_new,
             "items_total": len(items),
             "items_after_filter": len(filtered),
-            "sample_first_10": sample
+            "sample_first_10": sample,
         }
 
-    # --- cálculo promedio ponderado ---
     prices = [i["price"] for i in filtered]
     solds = [(i.get("sold_quantity") or 0) for i in filtered]
 
-    weighted_avg = sum(p * s for p, s in zip(prices, solds)) / sum(solds)
+    # Si min_sold=0 puede haber sold_quantity=0 y dividir por 0 -> evitamos
+    total_sold = sum(solds)
+    if total_sold <= 0:
+        return {
+            "error": "No sold_quantity available to compute weighted average",
+            "q": q,
+            "items_analyzed": len(filtered),
+            "hint": "Try min_sold=1 or higher",
+        }
+
+    weighted_avg = sum(p * s for p, s in zip(prices, solds)) / total_sold
 
     top_5 = sorted(filtered, key=lambda x: x.get("sold_quantity", 0), reverse=True)[:5]
     top_5_clean = [{
@@ -231,5 +250,5 @@ def market_analysis(q: str, limit: int = 50, min_sold: int = 1, only_new: bool =
         "weighted_average_price": round(weighted_avg, 2),
         "min_price": min(prices),
         "max_price": max(prices),
-        "top_5_best_sellers": top_5_clean
+        "top_5_best_sellers": top_5_clean,
     }
