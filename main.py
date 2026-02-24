@@ -13,9 +13,6 @@ def ml_headers():
         "User-Agent": "Mozilla/5.0 (Render) ml-backend/1.0",
         "Accept": "application/json",
     }
-    token = os.getenv("ML_ACCESS_TOKEN")
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
     return headers
 
 # ===== TOKEN MANAGEMENT =====
@@ -109,8 +106,7 @@ def ml_callback(code: str = Query(..., description="Authorization code from Merc
         "redirect_uri": redirect_uri,
     }
 
-    r = requests.post(ML_OAUTH_TOKEN_URL, data=data, timeout=20)
-
+r = requests.post(TOKEN_URL, data=data, timeout=20)
     # We return Mercado Libre response as-is (useful to see refresh_token)
     try:
         payload = r.json()
@@ -137,7 +133,6 @@ def search(q: str = Query(..., min_length=1), limit: int = 20):
     except Exception:
         data = {"raw": r.text}
     return JSONResponse(status_code=r.status_code, content=data)
-import statistics
 
 @app.get("/market/analysis")
 def market_analysis(q: str, limit: int = 50, min_sold: int = 1, only_new: bool = True):
