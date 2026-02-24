@@ -136,13 +136,34 @@ def search(q: str = Query(..., min_length=1), limit: int = 20):
 
 @app.get("/market/analysis")
 def market_analysis(q: str, limit: int = 50, min_sold: int = 1, only_new: bool = True):
-    r = requests.get(
+        r = requests.get(
         f"{BASE}/sites/MLA/search",
         params={"q": q, "limit": limit},
-        timeout=20
+        timeout=20,
+        headers=ml_headers(),  # ← importante
     )
 
-    data = r.json()
+    try:
+        data = r.json()
+    except Exception:
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": "ml_non_json",
+                "status_code": r.status_code,
+                "raw": r.text
+            }
+        )
+
+    if r.status_code != 200:
+        return JSONResponse(
+            status_code=r.status_code,
+            content={
+                "error": "ml_api_error",
+                "ml_response": data
+            }
+        )
+
     items = data.get("results", [])
 
     def ok_condition(i):
